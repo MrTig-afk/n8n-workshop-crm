@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Workshop CRM lead dashboard">
+  <title>Workshop CRM</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">WORKSHOP DEMO</p>
+        <h1>Leads</h1>
+        <p class="subtitle">A live view of the leads stored in the workshop CRM.</p>
+      </div>
+      <button id="refreshButton" class="refresh-button" type="button">
+        <span aria-hidden="true">↻</span> Refresh
+      </button>
+    </header>
+
+    <section class="stats" aria-label="Lead summary">
+      <article class="stat-card">
+        <span class="stat-label">Total leads</span>
+        <strong id="totalCount">—</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">High priority</span>
+        <strong id="highPriorityCount">—</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">Standard</span>
+        <strong id="standardCount">—</strong>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <h2>All leads</h2>
+          <p id="lastUpdated" class="muted">Not loaded yet</p>
+        </div>
+        <label class="search-box">
+          <span class="sr-only">Search leads</span>
+          <input id="searchInput" type="search" placeholder="Search name or email…">
+        </label>
+      </div>
+
+      <div id="message" class="message" role="status">Loading leads…</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Budget</th>
+              <th>Status</th>
+              <th>Enquiry</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="leadsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Workshop demonstration dashboard · Data is read from the CRM API.
+    </footer>
+  </main>
+</body>
+</html>
