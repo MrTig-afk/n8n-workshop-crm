@@ -23,7 +23,7 @@ if not DATABASE_URL:
 app = FastAPI(
     title="n8n Workshop CRM API",
     description="CRM API for the n8n workshop",
-    version="1.2.1"
+    version="1.2.2"
 )
 
 
@@ -33,9 +33,9 @@ app = FastAPI(
 
 def get_connection():
     try:
-        return psycopg2.connect(
+        return psycopg.connect(
             DATABASE_URL,
-            cursor_factory=RealDictCursor
+            row_factory=dict_row
         )
     except Exception as e:
         raise HTTPException(
@@ -183,7 +183,7 @@ def health_check():
         return {
             "status": "healthy",
             "database": "connected",
-            "version": "1.2.1"
+            "version": "1.2.2"
         }
 
     finally:
@@ -225,7 +225,7 @@ def create_lead(lead: LeadCreate):
         new_lead = cursor.fetchone()
         connection.commit()
 
-        return dict(new_lead)
+        return new_lead
 
     except Exception as e:
         connection.rollback()
@@ -260,7 +260,7 @@ def get_leads():
 
         leads = cursor.fetchall()
 
-        return [dict(lead) for lead in leads]
+        return leads
 
     finally:
         connection.close()
@@ -294,7 +294,7 @@ def get_lead(lead_id: int):
                 detail="Lead not found"
             )
 
-        return dict(lead)
+        return lead
 
     finally:
         connection.close()
@@ -376,7 +376,7 @@ def update_lead(lead_id: int, lead: LeadUpdate):
 
         connection.commit()
 
-        return dict(updated_lead)
+        return updated_lead
 
     except HTTPException:
         connection.rollback()
