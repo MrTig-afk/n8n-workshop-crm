@@ -1,19 +1,20 @@
 
 import os
+import re
 from contextlib import contextmanager
 from typing import Optional
 
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 app = FastAPI(
     title="Workshop CRM API",
     description="A simple practice CRM API for the n8n workshop.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
@@ -36,21 +37,73 @@ def get_connection():
 
 # Request model for creating a lead
 class LeadCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=2, max_length=200)
     email: EmailStr
     phone: Optional[str] = Field(default=None, max_length=50)
-    budget: Optional[str] = Field(default=None, max_length=100)
-    enquiry: Optional[str] = None
+    budget: int = Field(ge=0)
+    enquiry: str = Field(min_length=10, max_length=2000)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Name must contain at least 2 characters.")
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value):
+        if value is not None:
+            digits = re.sub(r"\D", "", value)
+            if len(digits) < 10:
+                raise ValueError("Phone number must contain at least 10 digits.")
+        return value
+
+    @field_validator("enquiry")
+    @classmethod
+    def validate_enquiry(cls, value):
+        value = value.strip()
+        if len(value) < 10:
+            raise ValueError("Enquiry must contain at least 10 characters.")
+        return value
 
 
 # Request model for updating a lead
 class LeadUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    name: Optional[str] = Field(default=None, min_length=2, max_length=200)
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(default=None, max_length=50)
-    budget: Optional[str] = Field(default=None, max_length=100)
-    enquiry: Optional[str] = None
+    budget: Optional[int] = Field(default=None, ge=0)
+    enquiry: Optional[str] = Field(default=None, min_length=10, max_length=2000)
     status: Optional[str] = Field(default=None, max_length=50)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+        if value is not None:
+            value = value.strip()
+            if len(value) < 2:
+                raise ValueError("Name must contain at least 2 characters.")
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, value):
+        if value is not None:
+            digits = re.sub(r"\D", "", value)
+            if len(digits) < 10:
+                raise ValueError("Phone number must contain at least 10 digits.")
+        return value
+
+    @field_validator("enquiry")
+    @classmethod
+    def validate_enquiry(cls, value):
+        if value is not None:
+            value = value.strip()
+            if len(value) < 10:
+                raise ValueError("Enquiry must contain at least 10 characters.")
+        return value
 
 
 @app.get("/")
@@ -89,7 +142,7 @@ def create_lead(lead: LeadCreate):
                 name,
                 email,
                 phone,
-                budget,
+                budget_amount,
                 enquiry
             )
             VALUES (%s, %s, %s, %s, %s)
@@ -147,6 +200,11 @@ def update_lead(lead_id: int, lead: LeadUpdate):
             detail="Provide at least one field to update."
         )
 
+    # Map the API field "budget" to the database column "budget_amount"
+    column_mapping = {
+        "budget": "budget_amount"
+    }
+
     allowed_fields = {
         "name",
         "email",
@@ -162,7 +220,8 @@ def update_lead(lead_id: int, lead: LeadUpdate):
     ]
 
     assignments = ", ".join(
-        f"{field} = %s" for field in fields
+        f"{column_mapping.get(field, field)} = %s"
+        for field in fields
     )
 
     values = [
