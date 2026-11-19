@@ -1,41 +1,53 @@
 
 import os
 import re
-from contextlib import contextmanager
 from typing import Optional
 
-import psycopg
-from psycopg.rows import dict_row
-from fastapi import FastAPI, HTTPException, status
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not configured")
+
 
 app = FastAPI(
-    title="Workshop CRM API",
-    description="A simple practice CRM API for the n8n workshop.",
-    version="1.2.0",
+    title="n8n Workshop CRM API",
+    description="CRM API for the n8n workshop",
+    version="1.2.1"
 )
 
 
-@contextmanager
+# --------------------------------------------------
+# DATABASE CONNECTION
+# --------------------------------------------------
+
 def get_connection():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL environment variable is not configured.")
-
-    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
-
     try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        return psycopg2.connect(
+            DATABASE_URL,
+            cursor_factory=RealDictCursor
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database connection failed: {str(e)}"
+        )
 
 
-# Request model for creating a lead
+# --------------------------------------------------
+# VALIDATION MODELS
+# --------------------------------------------------
+
 class LeadCreate(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     email: EmailStr
@@ -47,29 +59,51 @@ class LeadCreate(BaseModel):
     @classmethod
     def validate_name(cls, value):
         value = value.strip()
+
         if len(value) < 2:
             raise ValueError("Name must contain at least 2 characters.")
+
+        return value
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def normalize_phone(cls, value):
+        if value is None:
+            return None
+
+        if isinstance(value, str) and not value.strip():
+            return None
+
         return value
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, value):
-        if value is not None:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) < 10:
-                raise ValueError("Phone number must contain at least 10 digits.")
-        return value
+        if value is None:
+            return None
+
+        digits = re.sub(r"\D", "", value)
+
+        if len(digits) < 10:
+            raise ValueError(
+                "Phone number must contain at least 10 digits."
+            )
+
+        return value.strip()
 
     @field_validator("enquiry")
     @classmethod
     def validate_enquiry(cls, value):
         value = value.strip()
+
         if len(value) < 10:
-            raise ValueError("Enquiry must contain at least 10 characters.")
+            raise ValueError(
+                "Enquiry must contain at least 10 characters."
+            )
+
         return value
 
 
-# Request model for updating a lead
 class LeadUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=200)
     email: Optional[EmailStr] = None
@@ -81,62 +115,93 @@ class LeadUpdate(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, value):
-        if value is not None:
-            value = value.strip()
-            if len(value) < 2:
-                raise ValueError("Name must contain at least 2 characters.")
+        if value is None:
+            return None
+
+        value = value.strip()
+
+        if len(value) < 2:
+            raise ValueError("Name must contain at least 2 characters.")
+
+        return value
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def normalize_phone(cls, value):
+        if value is None:
+            return None
+
+        if isinstance(value, str) and not value.strip():
+            return None
+
         return value
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, value):
-        if value is not None:
-            digits = re.sub(r"\D", "", value)
-            if len(digits) < 10:
-                raise ValueError("Phone number must contain at least 10 digits.")
-        return value
+        if value is None:
+            return None
+
+        digits = re.sub(r"\D", "", value)
+
+        if len(digits) < 10:
+            raise ValueError(
+                "Phone number must contain at least 10 digits."
+            )
+
+        return value.strip()
 
     @field_validator("enquiry")
     @classmethod
     def validate_enquiry(cls, value):
-        if value is not None:
-            value = value.strip()
-            if len(value) < 10:
-                raise ValueError("Enquiry must contain at least 10 characters.")
+        if value is None:
+            return None
+
+        value = value.strip()
+
+        if len(value) < 10:
+            raise ValueError(
+                "Enquiry must contain at least 10 characters."
+            )
+
         return value
 
 
-@app.get("/")
-def root():
-    return {
-        "message": "Workshop CRM API is running",
-        "docs": "/docs"
-    }
-
+# --------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------
 
 @app.get("/health")
-def health():
+def health_check():
+    connection = get_connection()
+
     try:
-        with get_connection() as conn:
-            conn.execute("SELECT 1")
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
 
         return {
-            "status": "ok",
-            "database": "connected"
+            "status": "healthy",
+            "database": "connected",
+            "version": "1.2.1"
         }
 
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Database connection failed."
-        ) from exc
+    finally:
+        connection.close()
 
 
-# CREATE a lead
-@app.post("/leads", status_code=status.HTTP_201_CREATED)
+# --------------------------------------------------
+# CREATE LEAD
+# --------------------------------------------------
+
+@app.post("/leads", status_code=201)
 def create_lead(lead: LeadCreate):
-    with get_connection() as conn:
-        row = conn.execute(
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
             """
             INSERT INTO leads (
                 name,
@@ -153,122 +218,228 @@ def create_lead(lead: LeadCreate):
                 str(lead.email),
                 lead.phone,
                 lead.budget,
-                lead.enquiry,
-            ),
-        ).fetchone()
+                lead.enquiry
+            )
+        )
 
-    return row
+        new_lead = cursor.fetchone()
+        connection.commit()
+
+        return dict(new_lead)
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not create lead: {str(e)}"
+        )
+
+    finally:
+        connection.close()
 
 
-# READ all leads
+# --------------------------------------------------
+# GET ALL LEADS
+# --------------------------------------------------
+
 @app.get("/leads")
 def get_leads():
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads ORDER BY id"
-        ).fetchall()
+    connection = get_connection()
 
-    return rows
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM leads
+            ORDER BY created_at DESC
+            """
+        )
+
+        leads = cursor.fetchall()
+
+        return [dict(lead) for lead in leads]
+
+    finally:
+        connection.close()
 
 
-# READ one lead
+# --------------------------------------------------
+# GET SINGLE LEAD
+# --------------------------------------------------
+
 @app.get("/leads/{lead_id}")
 def get_lead(lead_id: int):
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM leads WHERE id = %s",
-            (lead_id,),
-        ).fetchone()
+    connection = get_connection()
 
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Lead not found."
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM leads
+            WHERE id = %s
+            """,
+            (lead_id,)
         )
 
-    return row
+        lead = cursor.fetchone()
+
+        if not lead:
+            raise HTTPException(
+                status_code=404,
+                detail="Lead not found"
+            )
+
+        return dict(lead)
+
+    finally:
+        connection.close()
 
 
-# UPDATE a lead
+# --------------------------------------------------
+# UPDATE LEAD
+# --------------------------------------------------
+
 @app.patch("/leads/{lead_id}")
 def update_lead(lead_id: int, lead: LeadUpdate):
-    updates = lead.model_dump(exclude_unset=True)
+    connection = get_connection()
 
-    if not updates:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update."
-        )
+    try:
+        cursor = connection.cursor()
 
-    # Map the API field "budget" to the database column "budget_amount"
-    column_mapping = {
-        "budget": "budget_amount"
-    }
+        update_data = lead.model_dump(exclude_unset=True)
 
-    allowed_fields = {
-        "name",
-        "email",
-        "phone",
-        "budget",
-        "enquiry",
-        "status",
-    }
+        if not update_data:
+            raise HTTPException(
+                status_code=400,
+                detail="No fields provided for update"
+            )
 
-    fields = [
-        field for field in updates
-        if field in allowed_fields
-    ]
+        # API field name -> database column name
+        column_mapping = {
+            "budget": "budget_amount"
+        }
 
-    assignments = ", ".join(
-        f"{column_mapping.get(field, field)} = %s"
-        for field in fields
-    )
+        allowed_columns = {
+            "name",
+            "email",
+            "phone",
+            "budget",
+            "enquiry",
+            "status"
+        }
 
-    values = [
-        str(updates[field])
-        if field == "email" and updates[field] is not None
-        else updates[field]
-        for field in fields
-    ]
+        fields = []
+        values = []
 
-    values.append(lead_id)
+        for field, value in update_data.items():
+            if field not in allowed_columns:
+                continue
 
-    with get_connection() as conn:
-        row = conn.execute(
-            f"""
+            column = column_mapping.get(field, field)
+
+            fields.append(f"{column} = %s")
+
+            if field == "email" and value is not None:
+                value = str(value)
+
+            values.append(value)
+
+        if not fields:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid fields provided"
+            )
+
+        values.append(lead_id)
+
+        query = f"""
             UPDATE leads
-            SET {assignments}
+            SET {", ".join(fields)}
             WHERE id = %s
             RETURNING *
-            """,
-            values,
-        ).fetchone()
+        """
 
-    if row is None:
+        cursor.execute(query, tuple(values))
+
+        updated_lead = cursor.fetchone()
+
+        if not updated_lead:
+            raise HTTPException(
+                status_code=404,
+                detail="Lead not found"
+            )
+
+        connection.commit()
+
+        return dict(updated_lead)
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
         raise HTTPException(
-            status_code=404,
-            detail="Lead not found."
+            status_code=500,
+            detail=f"Could not update lead: {str(e)}"
         )
 
-    return row
+    finally:
+        connection.close()
 
 
-# DELETE a lead
+# --------------------------------------------------
+# DELETE LEAD
+# --------------------------------------------------
+
 @app.delete("/leads/{lead_id}")
 def delete_lead(lead_id: int):
-    with get_connection() as conn:
-        row = conn.execute(
-            "DELETE FROM leads WHERE id = %s RETURNING *",
-            (lead_id,),
-        ).fetchone()
+    connection = get_connection()
 
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Lead not found."
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM leads
+            WHERE id = %s
+            RETURNING id
+            """,
+            (lead_id,)
         )
 
-    return {
-        "message": "Lead deleted",
-        "lead": row
-    }
+        deleted_lead = cursor.fetchone()
+
+        if not deleted_lead:
+            raise HTTPException(
+                status_code=404,
+                detail="Lead not found"
+            )
+
+        connection.commit()
+
+        return {
+            "message": "Lead deleted successfully",
+            "id": deleted_lead["id"]
+        }
+
+    except HTTPException:
+        connection.rollback()
+        raise
+
+    except Exception as e:
+        connection.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not delete lead: {str(e)}"
+        )
+
+    finally:
+        connection.close()
