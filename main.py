@@ -3,8 +3,8 @@ import os
 import re
 from typing import Optional
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr, Field, field_validator
